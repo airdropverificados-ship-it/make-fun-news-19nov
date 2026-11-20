@@ -1,47 +1,65 @@
 #!/usr/bin/env python3
-"""Build the DENSE v2 1024x1024 infographic for the make.fun bounty
-'Sum up 19 November's world news in one image'.
+"""Rebuild the dense v2 front page for the make.fun news bounty
+"Sum up 19 November's world news in one image".
 
-35 verified stories from Thursday 19 November 2026: 1 lead story + a
-34-item two-column grid. Pure PIL, deterministic — same bytes every run.
+Output: entry.png — a 1024x1024 newspaper-style infographic with 35
+verified stories from Thursday 19 November 2026: one lead story plus a
+34-item grid in two columns. Pure Pillow, fully deterministic, so every
+run writes identical bytes.
 
-Legibility choices for density:
-- Headlines are the only text in the grid (no summaries): each headline
-  carries the key fact, so nothing is lost at small size.
-- 15px bold headlines on a 18px line height, max 2 lines per item; the
-  build FAILS loudly (warning + truncation) if any headline needs 3 lines.
-- Colour-coded category tag inline at the start of line 1, so the eye can
-  scan by topic; zebra striping every other row to keep rows apart.
-- High-contrast ink on paper, generous column gutter, no text over images.
+How the density stays readable:
+- The grid carries headlines only (no summaries); each headline holds the
+  key fact, so nothing is lost at small size.
+- Bold 15px headlines on an 18px line height, at most two lines per item;
+  the build reports any headline that would need a third line.
+- A colour-coded category tag opens every item, so the eye can scan by
+  topic, and alternating rows are shaded to keep them apart.
+- Dark ink on warm paper, a wide gutter between columns, no text over
+  pictures.
 """
 from PIL import Image, ImageDraw, ImageFont
 
-OUT = "/home/hatch/workspace/make-fun-bounties/news-19nov-v2/entry.png"
+PAGE = (1024, 1024)
+EDGE = 24                      # outer margin
+GUTTER = 20                    # space between the two grid columns
+COLUMN = (PAGE[0] - 2 * EDGE - GUTTER) // 2   # 478
+GRID_TOP = 298
+ROW = 41                       # grid row height
+LINE = 18                      # headline line height
+ROWS_PER_COLUMN = 17
 
-W, H = 1024, 1024
-M = 24  # margin
 PAPER = (246, 241, 231)
-ZEBRA = (240, 234, 220)
+BAND = (240, 234, 220)         # zebra shading for alternate rows
 INK = (20, 20, 20)
-GRAY = (90, 86, 78)
-RED = (185, 28, 28)
-NAVY = (30, 58, 95)
+MUTED = (90, 86, 78)
+CRIMSON = (185, 28, 28)
+DEEP_BLUE = (30, 58, 95)
+SUMMARY_INK = (50, 50, 50)
+RULE_FAINT = (200, 192, 176)
 
-FD = "/usr/share/fonts/truetype/dejavu/"
-f_title = ImageFont.truetype(FD + "DejaVuSerif-Bold.ttf", 46)
-f_date = ImageFont.truetype(FD + "DejaVuSans-Bold.ttf", 19)
-f_lead_tag = ImageFont.truetype(FD + "DejaVuSans-Bold.ttf", 16)
-f_lead_head = ImageFont.truetype(FD + "DejaVuSans-Bold.ttf", 30)
-f_lead_sum = ImageFont.truetype(FD + "DejaVuSans.ttf", 16)
-f_section = ImageFont.truetype(FD + "DejaVuSans-Bold.ttf", 15)
-f_tag = ImageFont.truetype(FD + "DejaVuSans-Bold.ttf", 13)
-f_head = ImageFont.truetype(FD + "DejaVuSans-Bold.ttf", 15)
-f_foot = ImageFont.truetype(FD + "DejaVuSans.ttf", 13)
+FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
 
-# tag -> colour
-COLORS = {
-    "JUSTICE": (109, 40, 217), "CONFLICT": (194, 65, 12), "WAR": (153, 27, 27),
-    "TECH": (29, 78, 216), "CULTURE": (21, 128, 61), "WEATHER": (15, 118, 110),
+
+def load_typefaces():
+    """Return the named fonts used across the page."""
+    return {
+        "masthead": ImageFont.truetype(FONT_DIR + "DejaVuSerif-Bold.ttf", 46),
+        "dateline": ImageFont.truetype(FONT_DIR + "DejaVuSans-Bold.ttf", 19),
+        "kicker": ImageFont.truetype(FONT_DIR + "DejaVuSans-Bold.ttf", 16),
+        "lead_head": ImageFont.truetype(FONT_DIR + "DejaVuSans-Bold.ttf", 30),
+        "lead_body": ImageFont.truetype(FONT_DIR + "DejaVuSans.ttf", 16),
+        "section": ImageFont.truetype(FONT_DIR + "DejaVuSans-Bold.ttf", 15),
+        "tag": ImageFont.truetype(FONT_DIR + "DejaVuSans-Bold.ttf", 13),
+        "headline": ImageFont.truetype(FONT_DIR + "DejaVuSans-Bold.ttf", 15),
+        "footer": ImageFont.truetype(FONT_DIR + "DejaVuSans.ttf", 13),
+    }
+
+
+# Category tag -> colour.
+TAG_COLOURS = {
+    "JUSTICE": (109, 40, 217), "CONFLICT": (194, 65, 12),
+    "WAR": (153, 27, 27), "TECH": (29, 78, 216),
+    "CULTURE": (21, 128, 61), "WEATHER": (15, 118, 110),
     "US": (30, 58, 95), "US POLITICS": (30, 58, 95),
     "MIGRATION": (120, 53, 15), "SPORTS": (190, 24, 93),
     "CRICKET": (190, 24, 93), "FOOTBALL": (190, 24, 93),
@@ -55,9 +73,9 @@ COLORS = {
     "DIPLOMACY": (107, 33, 168), "SCIENCE": (8, 145, 178),
 }
 
-# The 34 grid stories (the lead story is drawn separately). Order: v1's
-# six cards, v1's five ticker items, then the 23 new stories.
-STORIES = [
+# The 34 grid stories (the lead story is drawn separately). Order: the
+# six v1 cards, the five v1 ticker items, then the 23 new stories.
+GRID_STORIES = [
     ("JUSTICE", "World Court: Myanmar committed genocide against the Rohingya, 9-6"),
     ("CONFLICT", "Tankers ablaze in the Strait of Hormuz; 11 crew hurt, one missing"),
     ("WAR", "Ukraine strikes the Crimea bridge again, halting road traffic"),
@@ -76,7 +94,7 @@ STORIES = [
     ("US", "Trump pardons late baseball legend Pete Rose for tax crimes"),
     ("ANIMALS", "Beloved hippo Fiona dies at Cincinnati Zoo after eating a hat"),
     ("TECH", "FCC votes to ban Chinese telecoms from US phone numbers"),
-    ("UKRAINE", "UK and Norway fund \u00a3100m+ for two Ukrainian naval craft"),
+    ("UKRAINE", "UK and Norway fund £100m+ for two Ukrainian naval craft"),
     ("DEFENCE", "Denmark's parliament approves Greenland defence deal, 109-0"),
     ("APEC", "APEC adopts Shenzhen Outlook on trade, data and AI risks"),
     ("GAZA", "Aid groups rate Gaza peace-plan implementation 4 out of 26"),
@@ -85,7 +103,7 @@ STORIES = [
     ("MONGOLIA", "Mongolia's parliament accepts president's resignation over graft claims"),
     ("ASIA", "India lets Japanese forces fire missiles on its ranges"),
     ("CLIMATE", "COP31 draft drops all fossil-fuel language; outcry in Antalya"),
-    ("CHILDREN", "Record 589m children now live in conflict zones \u2014 Save the Children"),
+    ("CHILDREN", "Record 589m children now live in conflict zones — Save the Children"),
     ("DIPLOMACY", "Fifteen nations back UK-Australia sanctions on Israeli settlements"),
     ("US POLITICS", "Democrats secure historic 56-seat Senate majority in midterms"),
     ("SCIENCE", "Physicists send a message through a brick wall using gravity"),
@@ -94,106 +112,127 @@ STORIES = [
     ("BASKETBALL", "NC State beats Murray State 93-83; McNeil's record 33 points"),
 ]
 
-assert len(STORIES) == 34, len(STORIES)
+LEAD_KICKER = "TOP STORY  |  SHENZHEN SUMMIT"
+LEAD_HEADLINE = "Trump, Xi and Putin sign joint peace declaration at Shenzhen summit"
+LEAD_BODY = ("First-ever meeting of the leaders of the three largest nuclear powers, on the "
+             "APEC sidelines. The four-point declaration backs peace — but says nothing "
+             "about Ukraine or Iran.")
 
-img = Image.new("RGB", (W, H), PAPER)
-d = ImageDraw.Draw(img)
+DESTINATION = "/home/hatch/workspace/make-fun-bounties/news-19nov-v2/entry.png"
 
 
-def wrap(text, font, first_w, rest_w):
-    """Wrap text; first line gets first_w, later lines rest_w."""
-    words = text.split(" ")
-    lines, cur, max_w = [], "", first_w
-    for w in words:
-        trial = (cur + " " + w).strip()
-        if d.textlength(trial, font=font) <= max_w:
-            cur = trial
+def split_lines(canvas, text, font, opening_width, following_width):
+    """Greedy word wrap; the first line may use opening_width, the rest
+    following_width."""
+    pieces = text.split(" ")
+    wrapped, current = [], ""
+    limit = opening_width
+    for piece in pieces:
+        candidate = (current + " " + piece).strip()
+        if canvas.textlength(candidate, font=font) <= limit:
+            current = candidate
         else:
-            if cur:
-                lines.append(cur)
-            cur, max_w = w, rest_w
-    if cur:
-        lines.append(cur)
-    return lines
+            if current:
+                wrapped.append(current)
+            current, limit = piece, following_width
+    if current:
+        wrapped.append(current)
+    return wrapped
 
 
-def center(text, font, y, fill):
-    w = d.textlength(text, font=font)
-    d.text(((W - w) / 2, y), text, font=font, fill=fill)
+def centred(canvas, text, font, y, colour):
+    width = canvas.textlength(text, font=font)
+    canvas.text(((PAGE[0] - width) / 2, y), text, font=font, fill=colour)
 
 
-# ---- Masthead ----
-center("THE WORLD IN ONE DAY", f_title, 16, INK)
-center("THURSDAY, 19 NOVEMBER 2026  \u00b7  35 STORIES FROM AROUND THE GLOBE",
-       f_date, 72, RED)
-d.rectangle([M, 102, W - M, 106], fill=RED)
-d.rectangle([M, 110, W - M, 111], fill=INK)
+def draw_header(canvas, fonts):
+    centred(canvas, "THE WORLD IN ONE DAY", fonts["masthead"], 16, INK)
+    centred(canvas, "THURSDAY, 19 NOVEMBER 2026  ·  35 STORIES FROM AROUND THE GLOBE",
+            fonts["dateline"], 72, CRIMSON)
+    canvas.rectangle([EDGE, 102, PAGE[0] - EDGE, 106], fill=CRIMSON)
+    canvas.rectangle([EDGE, 110, PAGE[0] - EDGE, 111], fill=INK)
 
-# ---- Lead story ----
-d.text((M, 122), "TOP STORY  |  SHENZHEN SUMMIT", font=f_lead_tag, fill=RED)
-lead_head = "Trump, Xi and Putin sign joint peace declaration at Shenzhen summit"
-y = 144
-for line in wrap(lead_head, f_lead_head, W - 2 * M, W - 2 * M):
-    d.text((M, y), line, font=f_lead_head, fill=INK)
-    y += 36
-lead_sum = ("First-ever meeting of the leaders of the three largest nuclear powers, on the "
-            "APEC sidelines. The four-point declaration backs peace \u2014 but says nothing "
-            "about Ukraine or Iran.")
-y += 2
-for line in wrap(lead_sum, f_lead_sum, W - 2 * M, W - 2 * M):
-    d.text((M, y), line, font=f_lead_sum, fill=(50, 50, 50))
-    y += 21
-d.rectangle([M, 258, W - M, 259], fill=INK)
 
-# ---- Section label ----
-d.text((M, 268), "THE DAY IN FULL \u2014 34 MORE STORIES", font=f_section, fill=NAVY)
-d.rectangle([M, 290, W - M, 291], fill=(200, 192, 176))
+def draw_lead(canvas, fonts):
+    canvas.text((EDGE, 122), LEAD_KICKER, font=fonts["kicker"], fill=CRIMSON)
+    pen_y = 144
+    for row in split_lines(canvas, LEAD_HEADLINE, fonts["lead_head"],
+                           PAGE[0] - 2 * EDGE, PAGE[0] - 2 * EDGE):
+        canvas.text((EDGE, pen_y), row, font=fonts["lead_head"], fill=INK)
+        pen_y += 36
+    pen_y += 2
+    for row in split_lines(canvas, LEAD_BODY, fonts["lead_body"],
+                           PAGE[0] - 2 * EDGE, PAGE[0] - 2 * EDGE):
+        canvas.text((EDGE, pen_y), row, font=fonts["lead_body"], fill=SUMMARY_INK)
+        pen_y += 21
+    canvas.rectangle([EDGE, 258, PAGE[0] - EDGE, 259], fill=INK)
 
-# ---- Dense 2-column grid ----
-COL_GAP = 20
-COL_W = (W - 2 * M - COL_GAP) // 2  # 478
-GRID_TOP = 298
-ROW_H = 41
-LH = 18  # headline line height
-PER_COL = 17
-warnings = []
 
-for col in range(2):
-    cx = M + col * (COL_W + COL_GAP)
-    for row in range(PER_COL):
-        idx = col * PER_COL + row
-        tag, head = STORIES[idx]
-        ry = GRID_TOP + row * ROW_H
-        if row % 2 == 0:
-            d.rectangle([cx - 4, ry - 2, cx + COL_W + 4, ry + ROW_H - 4], fill=ZEBRA)
-        color = COLORS[tag]
-        tw = d.textlength(tag, font=f_tag)
-        d.text((cx + 4, ry + 4), tag, font=f_tag, fill=color)
-        first_w = COL_W - (tw + 16)
-        lines = wrap(head, f_head, first_w, COL_W - 8)
-        if len(lines) > 2:
-            warnings.append(f"{tag}: {head!r} wraps to {len(lines)} lines")
-            lines = lines[:2]
-            # truncate line 2 with an ellipsis
-            while d.textlength(lines[1] + "\u2026", font=f_head) > COL_W - 8:
-                lines[1] = lines[1][:-1]
-            lines[1] += "\u2026"
-        d.text((cx + 4 + tw + 8, ry + 2), lines[0], font=f_head, fill=INK)
-        if len(lines) > 1:
-            d.text((cx + 4, ry + 2 + LH), lines[1], font=f_head, fill=INK)
+def draw_section_heading(canvas, fonts):
+    canvas.text((EDGE, 268), "THE DAY IN FULL — 34 MORE STORIES",
+                font=fonts["section"], fill=DEEP_BLUE)
+    canvas.rectangle([EDGE, 290, PAGE[0] - EDGE, 291], fill=RULE_FAINT)
 
-grid_bottom = GRID_TOP + PER_COL * ROW_H
-assert grid_bottom <= 1000, f"grid overflows: {grid_bottom}"
 
-# ---- Footer ----
-center("Compiled from public news reports  |  The World in One Day  |  19 November 2026",
-       f_foot, 1002, GRAY)
+def draw_grid(canvas, fonts):
+    """Draw the 34-item grid and return (bottom edge, overflow notes)."""
+    notes = []
+    for column in range(2):
+        origin_x = EDGE + column * (COLUMN + GUTTER)
+        for row in range(ROWS_PER_COLUMN):
+            position = column * ROWS_PER_COLUMN + row
+            label, headline = GRID_STORIES[position]
+            top = GRID_TOP + row * ROW
+            if row % 2 == 0:
+                canvas.rectangle([origin_x - 4, top - 2,
+                                  origin_x + COLUMN + 4, top + ROW - 4],
+                                 fill=BAND)
+            hue = TAG_COLOURS[label]
+            label_width = canvas.textlength(label, font=fonts["tag"])
+            canvas.text((origin_x + 4, top + 4), label,
+                        font=fonts["tag"], fill=hue)
+            opening = COLUMN - (label_width + 16)
+            rows = split_lines(canvas, headline, fonts["headline"],
+                               opening, COLUMN - 8)
+            if len(rows) > 2:
+                notes.append(f"{label}: {headline!r} wraps to {len(rows)} lines")
+                rows = rows[:2]
+                while canvas.textlength(rows[1] + "…", font=fonts["headline"]) > COLUMN - 8:
+                    rows[1] = rows[1][:-1]
+                rows[1] += "…"
+            canvas.text((origin_x + 4 + label_width + 8, top + 2), rows[0],
+                        font=fonts["headline"], fill=INK)
+            if len(rows) > 1:
+                canvas.text((origin_x + 4, top + 2 + LINE), rows[1],
+                            font=fonts["headline"], fill=INK)
+    return GRID_TOP + ROWS_PER_COLUMN * ROW, notes
 
-img.save(OUT, "PNG", optimize=True)
-print(f"saved {OUT} {img.size}  stories={1 + len(STORIES)}  grid_bottom={grid_bottom}")
-if warnings:
-    print("WARNINGS:")
-    for w in warnings:
-        print(" -", w)
-else:
-    print("all headlines fit in 2 lines")
+
+def draw_footer(canvas, fonts):
+    centred(canvas, "Compiled from public news reports  |  The World in One Day  |  19 November 2026",
+            fonts["footer"], 1002, MUTED)
+
+
+def build():
+    assert len(GRID_STORIES) == 34, len(GRID_STORIES)
+    sheet = Image.new("RGB", PAGE, PAPER)
+    canvas = ImageDraw.Draw(sheet)
+    fonts = load_typefaces()
+    draw_header(canvas, fonts)
+    draw_lead(canvas, fonts)
+    draw_section_heading(canvas, fonts)
+    bottom, notes = draw_grid(canvas, fonts)
+    assert bottom <= 1000, f"grid overflows: {bottom}"
+    draw_footer(canvas, fonts)
+    sheet.save(DESTINATION, "PNG", optimize=True)
+    print(f"saved {DESTINATION} {sheet.size}  stories={1 + len(GRID_STORIES)}  grid_bottom={bottom}")
+    if notes:
+        print("WARNINGS:")
+        for note in notes:
+            print(" -", note)
+    else:
+        print("all headlines fit in 2 lines")
+
+
+if __name__ == "__main__":
+    build()
